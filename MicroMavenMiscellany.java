@@ -12,9 +12,12 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.OutputStreamWriter;
 import java.io.Reader;
 import java.io.Writer;
 import java.net.InetSocketAddress;
@@ -118,7 +121,7 @@ public class MicroMavenMiscellany implements HttpHandler {
             if (auth != null && MessageDigest.isEqual(hash(auth), hashedAuth)) {
                 try (InputStream i = new BufferedInputStream(exchange.getRequestBody())) {
                     Path target = FILES.resolve(exchange.getRequestURI().getPath().substring(1)).toFile().getCanonicalFile().toPath(); // Avoid .. to write elsewere on the fs
-                    if (DEBUG) System.out.println("Uploading " + target);
+                    if (DEBUG) System.out.println("PUT " + target);
                     if (!target.startsWith(FILES)) {
                         throw new UnsupportedOperationException("Illegal path");
                     }
@@ -136,7 +139,7 @@ public class MicroMavenMiscellany implements HttpHandler {
     
     void get(HttpExchange exchange) throws IOException {
         Path target = FILES.resolve(exchange.getRequestURI().getPath().substring(1)).toFile().getCanonicalFile().toPath(); // Avoid .. to read elsewere on the fs
-        System.err.println(target);
+        if (DEBUG) System.out.println("GET " + target);
         if (!target.startsWith(FILES)) {
             throw new UnsupportedOperationException("Illegal path");
         }
@@ -145,9 +148,70 @@ public class MicroMavenMiscellany implements HttpHandler {
             try (OutputStream o = exchange.getResponseBody()) {
                 Files.copy(target, o);
             }
+        } else if (Files.isDirectory(target)) {
+            StringBuilder nicePathBuilder = new StringBuilder();
+            nicePathBuilder.append("/");
+            for (Path p : FILES.relativize(target)) {
+                if (!p.toString().isEmpty()) {
+                    nicePathBuilder.append(htmlEncode(p.toString()));
+                    nicePathBuilder.append("/");
+                }
+            }
+            String nicePath = nicePathBuilder.toString();
+            String title = "Index of " + nicePath;
+            ByteArrayOutputStream bao = new ByteArrayOutputStream();
+            Writer baw = new OutputStreamWriter(bao, StandardCharsets.UTF_8);
+            baw.append("<html><head><title>");
+            baw.append(title);
+            baw.append("</title></head><body><h1>");
+            baw.append(title);
+            baw.append("</h1><hr><a href=\"../\">../</a></br>");
+            for (String file : target.toFile().list()) {
+                String escFile = htmlEncode(file) + (new File(target.toFile(), file).isDirectory() ? "/" : ""); 
+                baw.append("<a href=\"");
+                baw.append(nicePath + escFile);
+                baw.append("\">");
+                baw.append(escFile);
+                baw.append("</a><br>");
+            }
+            baw.append("</body></html>");
+            baw.flush();
+            exchange.sendResponseHeaders(200, bao.size());
+            try (OutputStream o = exchange.getResponseBody()) {
+                o.write(bao.toByteArray());
+            }
         } else {
             exchange.sendResponseHeaders(404, -1);
         }
+    }
+
+    // https://stackoverflow.com/a/4874768
+    // https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
+    String htmlEncode(String unsafe) {
+        StringBuilder r = new StringBuilder();
+        for (int i = 0; i < unsafe.length(); i++) {
+            char c = unsafe.charAt(i);
+            switch (c) {
+                case '&':
+                    r.append("&amp;");
+                    break;
+                case '"':
+                    r.append("&quot;");
+                    break;
+                case '<':
+                    r.append("&lt;");
+                    break;
+                case '>':
+                    r.append("&gt;");
+                    break;
+                case '\'':
+                    r.append("&#x27;");
+                    break;
+                default:
+                    r.append(c);
+            }
+        }
+        return r.toString();
     }
 
     byte[] hash(String s) throws Exception {

@@ -12,6 +12,7 @@ A maven server in one Java 8 class file with no dependencies!
 
 * No dependencies
 * Authentication is hashed on disk
+* Browse file system
 
 ## About
 
